@@ -1,0 +1,15 @@
+# Virtual environments
+pychiro_env/
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# PyChiro specific
+*.pt 

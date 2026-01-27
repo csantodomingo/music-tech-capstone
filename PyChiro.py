@@ -874,7 +874,7 @@ class CameraApp(QMainWindow):
         self.select_camera_label = QLabel("Camera ID or Video path:")
         self.select_camera_line_edit = QLineEdit()
         # self.select_camera_line_edit.setText("/Users/francescodani/Movies/PyChiro_Data/Unprocessed/Notes/A1_08.mov")
-        self.select_camera_line_edit.setText("1")
+        self.select_camera_line_edit.setText("0")
         camera_h_layout.addWidget(self.select_camera_label)
         camera_h_layout.addWidget(self.select_camera_line_edit)
         camera_h_layout.addWidget(self.start_button)
