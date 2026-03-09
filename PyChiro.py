@@ -12,14 +12,14 @@ import torch.nn.init as init
 import torch.optim as optim
 import torch.nn.functional as F
 import rtmidi
+import threading
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QHBoxLayout, QVBoxLayout, QWidget, QLabel,
     QPushButton, QComboBox, QMenu, QSpinBox, QLineEdit, QCheckBox
 )
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen
-from pythonosc import udp_client
-
+from pythonosc import udp_client, dispatcher, osc_server
 
 mp_drawing = mp.solutions.drawing_utils
 notes_onehot_header = ["Do (C)", "Re (D)", "Mi (E)", "Fa (F)", "Sol (G)", "La (A)", "Si (B)"]
@@ -438,20 +438,9 @@ class CameraThread(QThread):
             # Calcolo della distanza lungo l'asse X
             current_distance_x = abs(right_wrist.x - right_elbow.x)
 
-            # Aggiornamento dei valori di calibrazione
-            if str(self.main_app.velocity_mode_combo.currentText()) == "Dynamic Adaptive":  # Calibrazione dinamica
-                self.main_app.max_elbow_wrist_x_distance = max(self.main_app.max_elbow_wrist_x_distance, current_distance_x)
-                self.main_app.min_elbow_wrist_x_distance = min(self.main_app.min_elbow_wrist_x_distance, current_distance_x)
-            elif str(self.main_app.velocity_mode_combo.currentText()) == "Upper Arm":  # In base a lunghezza avambraccio
-                # print("max_elbow_wrist_x_distance is:", self.main_app.max_elbow_wrist_x_distance)
-                self.main_app.max_elbow_wrist_x_distance = max(self.main_app.max_elbow_wrist_x_distance, upper_arm_length)
-                self.main_app.min_elbow_wrist_x_distance = min(self.main_app.min_elbow_wrist_x_distance, upper_arm_length / 2)
-            elif str(self.main_app.velocity_mode_combo.currentText()) == "Lower Arm":  # In base a lunghezza braccio
-                self.main_app.max_elbow_wrist_x_distance = max(self.main_app.max_elbow_wrist_x_distance, lower_arm_length * 0.75)
-                self.main_app.min_elbow_wrist_x_distance = min(self.main_app.min_elbow_wrist_x_distance, lower_arm_length / 2)
-            elif str(self.main_app.velocity_mode_combo.currentText()) == "Shoulder":  # In base a lunghezza spalle
-                self.main_app.max_elbow_wrist_x_distance = shoulder_length * 0.75
-                self.main_app.min_elbow_wrist_x_distance = shoulder_length / 3
+            # Dynamic Adaptive Velocity Management
+            self.main_app.max_elbow_wrist_x_distance = max(self.main_app.max_elbow_wrist_x_distance, current_distance_x)
+            self.main_app.min_elbow_wrist_x_distance = min(self.main_app.min_elbow_wrist_x_distance, current_distance_x)
 
             # Verifica che i valori di calibrazione siano validi
             if self.main_app.max_elbow_wrist_x_distance > self.main_app.min_elbow_wrist_x_distance:
@@ -922,6 +911,17 @@ class CameraApp(QMainWindow):
         # OSC setup
         self.osc_client = udp_client.SimpleUDPClient("127.0.0.1", 7400)
 
+        # OSC dispatcher and server setup
+        self.osc_dispatcher = dispatcher.Dispatcher()
+        self.osc_dispatcher.map("/base_note", self.handle_base_note)
+        self.osc_dispatcher.map("/scale", self.handle_scale)
+        self.osc_dispatcher.map("/min_velocity", self.handle_min_velocity)
+
+        self.osc_server = osc_server.ThreadingOSCUDPServer(("127.0.0.1", 7401), self.osc_dispatcher)
+        self.osc_server_thread = threading.Thread(target=self.osc_server.serve_forever)
+        self.osc_server_thread.daemon = True
+        self.osc_server_thread.start()
+
         # Connections
         self.base_note_spin.valueChanged.connect(self.change_base_note)
         self.min_velocity_spin.valueChanged.connect(self.change_min_velocity)
@@ -1042,8 +1042,19 @@ class CameraApp(QMainWindow):
     def update_probabilities(self, probabilities):
         """Update the probabilities of the histogram"""
         self.prob_hist.set_probabilities(probabilities)
-        
 
+    def handle_base_note(self, addr, value):
+        self.base_note = int(value)
+        print(f"Base note changed to: {self.base_note}")  
+
+    def handle_scale(self, addr, value):
+        self.current_scale = major_scale if int(value) == 0 else minor_scale
+        print(f"Scale changed to: {int(value)}") 
+
+    def handle_min_velocity(self, addr, value):
+        self.min_velocity_to_trigger_note_on = int(value)
+        print(f"Min velocity changed to: {self.min_velocity_to_trigger_note_on}")  
+        
     def all_notes_off(self):
         """ Note Off globale """
         for i in range(127):
