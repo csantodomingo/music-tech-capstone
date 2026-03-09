@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen
+from pythonosc import udp_client
 
 
 mp_drawing = mp.solutions.drawing_utils
@@ -611,6 +612,7 @@ class CameraThread(QThread):
                     true_val, output = predict_single_input(self.model, right_hand_measures)
                     # print(f"Output type is {type(output)}: {output}")
                     self.probabilities.emit(output)  # Emit the probabilities found by the model
+                    self.main_app.osc_client.send_message("/probabilities", output.tolist())
                     octave = self.compute_octave(results)
                     midi_note = self.main_app.current_scale[np.argmax(output)] + self.main_app.base_note + (octave * 12)
                     midi_note = self.main_app.compute_median_midi_note(midi_note)
@@ -618,6 +620,7 @@ class CameraThread(QThread):
                     velocity = self.compute_velocity(results)
                     if midi_note is not None:
                         text = notes_onehot_header[np.argmax(output)] + f"{octave}; v:{velocity}"
+                        self.main_app.osc_client.send_message("/note", [int(midi_note), int(velocity), int(octave)])
 
                     # Disegna a schermo i punti di pose_landmarks di wrist ed elbow
                     mp_drawing.draw_landmarks(frame, results.right_hand_landmarks, self.mp_holistic.HAND_CONNECTIONS, connection_drawing_spec=mp_drawing.DrawingSpec(color=(0, 250, 0), thickness=2, circle_radius=4))
@@ -722,20 +725,24 @@ class CameraThread(QThread):
                     if last_midi_note != midi_note:
                         if last_midi_note is not None:
                             self.main_app.all_notes_off()
+                            self.main_app.osc_client.send_message("/note_off", [])
                         if velocity >= self.main_app.min_velocity_to_trigger_note_on:  # Se la velocity è sopra la soglia minima per triggerare un NoteON
                             self.main_app.midi_out.send_message([0x90, int(midi_note), velocity])  # Note On corrente quando nota cambia
                         else:  # Altrimenti spegni la nota
                             self.main_app.all_notes_off()
+                            self.main_app.osc_client.send_message("/note_off", [])
                     # Se continua una nota ma la velocity sale sopra la soglia, manda il NoteON
                     elif last_midi_note == midi_note and last_velocity < self.main_app.min_velocity_to_trigger_note_on <= velocity:
                         self.main_app.midi_out.send_message([0x90, int(midi_note), velocity])  # Note On corrente quando nota cambia
                     # Se continua una nota ma la velocity scende sotto la soglia, manda il NoteOFF
                     elif last_midi_note == midi_note and velocity < self.main_app.min_velocity_to_trigger_note_on <= last_velocity:
                         self.main_app.all_notes_off()
+                        self.main_app.osc_client.send_message("/note_off", [])
                 except:
                     print("NO MIDI OUT CONNECTED")
             else:
                 self.main_app.all_notes_off()
+                self.main_app.osc_client.send_message("/note_off", [])
             last_midi_note = midi_note
             last_velocity = velocity
             frame = cv2.flip(frame, 1)  # Mirror horizontally before adding text
@@ -912,6 +919,9 @@ class CameraApp(QMainWindow):
         self.refresh_midi_devices()
         self.change_device(0)
 
+        # OSC setup
+        self.osc_client = udp_client.SimpleUDPClient("127.0.0.1", 7400)
+
         # Connections
         self.base_note_spin.valueChanged.connect(self.change_base_note)
         self.min_velocity_spin.valueChanged.connect(self.change_min_velocity)
@@ -1032,6 +1042,7 @@ class CameraApp(QMainWindow):
     def update_probabilities(self, probabilities):
         """Update the probabilities of the histogram"""
         self.prob_hist.set_probabilities(probabilities)
+        
 
     def all_notes_off(self):
         """ Note Off globale """
