@@ -183,7 +183,13 @@ class OSCInputHandler:
         self.last_velocity = 0
         self.note_vector = []
         self.note_vector_size = 11
+        self.last_gesture_time = 0  
+        self.no_hand_timeout = 0.2  # seconds needed for no hand timeout
         
+        # start a watchdog thread that checks for hand disappearance
+        watchdog = threading.Thread(target=self.watchdog_loop, daemon=True)
+        watchdog.start()
+
         checkpoint_path = os.path.join(get_working_dir(), "checkpoints", "checkpoint_latest.pt")
         self.model = MeasuresNetworkKodalyC1C2_slim()
         self.model.eval()
@@ -191,6 +197,18 @@ class OSCInputHandler:
             checkpoint = torch.load(checkpoint_path)
             self.model.load_state_dict(checkpoint['model_state_dict'])
         print("Running!")
+
+    def watchdog_loop(self):
+        """sends note_off if no gesture received within timeout period"""
+        while True:
+            time.sleep(0.05)  # check every 50ms
+            if self.last_midi_note is not None:
+                elapsed = time.time() - self.last_gesture_time
+                if elapsed > self.no_hand_timeout:
+                    self.app.osc_client.send_message("/note_off", [])
+                    self.last_midi_note = None
+                    self.note_vector = []  # clear median buffer too
+                    print("[DEBUG] hand lost — note off")
 
     def compute_median_midi_note(self, midi_note):
         self.note_vector.append(midi_note)
@@ -203,6 +221,7 @@ class OSCInputHandler:
 
     def handle_gesture(self, address, *args):
         print(f"[DEBUG] message received")
+        self.last_gesture_time = time.time()
         """OSC handler for /gesture messages coming from Max."""
         osc_data = parse_osc_args(args)
         if osc_data is None:
@@ -236,11 +255,10 @@ class OSCInputHandler:
             midi_note = self.compute_median_midi_note(raw_midi)
             print(f"[DEBUG] raw class: {raw_class}, raw_midi: {raw_midi}, smoothed: {midi_note}")
 
-            if midi_note is not None and midi_note != self.last_midi_note:
-                if self.last_midi_note is not None:
-                    self.app.osc_client.send_message("/note_off", [])
-                self.app.osc_client.send_message("/note", [int(midi_note), 80, 0])
-                self.last_midi_note = midi_note
+            if midi_note is not None:
+                if midi_note != self.last_midi_note:
+                    self.app.osc_client.send_message("/note", [int(midi_note), 80, 0])
+                    self.last_midi_note = midi_note
 
         except Exception as e:
             print("Processing error:", e)
