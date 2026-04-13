@@ -41,41 +41,6 @@ def osc_dict_to_landmarks(osc_data: dict):
         landmarks.append(LandmarkPoint(pt["x"], pt["y"], pt["z"]))
     return landmarks
 
-# def parse_osc_args(args):
-#     """
-#     Parse the OSC formatted string into a dict of landmark name -> {x, y, z}.
-#     Skips the 'Gestures' block and 'Right'/'Left' prefix.
-#     """
-#     # args is a tuple; the gesture string is the first (or only) element
-#     raw = args[0] if args else ""
-#     if not isinstance(raw, str):
-#         print("Unexpected OSC arg type:", type(raw))
-#         return None
-
-#     result = {}
-
-#     # find all blocks: name : { key : val key : val ... }
-#     block_pattern = re.compile(r'(\w+)\s*:\s*\{([^}]*)\}')
-    
-#     for match in block_pattern.finditer(raw):
-#         block_name = match.group(1)
-#         block_body = match.group(2)
-
-#         if block_name in ("Gestures", "Right", "Left"):
-#             continue  # skip for now
-
-#         # extract x, y, z from block body
-#         coords = {}
-#         for axis in ("x", "y", "z"):
-#             m = re.search(rf'{axis}\s*:\s*(-?[\d.e]+)', block_body)
-#             if m:
-#                 coords[axis] = float(m.group(1))
-
-#         if len(coords) == 3:
-#             result[block_name] = coords
-
-#     return result if result else None
-
 def parse_osc_args(args):
     """
     Parse OSC args tuple of tokens into a dict of landmark name -> {x, y, z}.
@@ -219,7 +184,7 @@ class OSCInputHandler:
         self.note_vector = []
         self.note_vector_size = 11
         
-        checkpoint_path = os.path.join(get_working_dir(), "checkpoints", "checkpoint_epoch_10.pt")
+        checkpoint_path = os.path.join(get_working_dir(), "checkpoints", "checkpoint_latest.pt")
         self.model = MeasuresNetworkKodalyC1C2_slim()
         self.model.eval()
         if os.path.exists(checkpoint_path):

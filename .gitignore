@@ -1,5 +1,5 @@
 # Virtual environments
-pychiro_env/
+kdly_env/
 venv/
 env/
 ENV/
@@ -11,5 +11,7 @@ __pycache__/
 *.so
 .Python
 
-# PyChiro specific
+# KDLY specific
 *.pt 
+checkpoints/
+training_data*.csv
