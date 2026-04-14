@@ -42,28 +42,26 @@ def osc_dict_to_landmarks(osc_data: dict):
     return landmarks
 
 def parse_osc_args(args):
-    """
-    Parse OSC args tuple of tokens into a dict of landmark name -> {x, y, z}.
-    Args arrive as flat tokens: ('Right', ':', '{', 'wrist', ':', '{', 'x', ':', 0.5, ...})
-    """
     tokens = list(args)
-    result = {}
+    result = {"Right": {}, "Left": {}}
+    current_hand = None
     i = 0
 
     while i < len(tokens):
-        # look for pattern: name ':' '{' 'x' ':' val 'y' ':' val 'z' ':' val '}'
         if isinstance(tokens[i], str) and i + 2 < len(tokens) and tokens[i+1] == ':' and tokens[i+2] == '{':
             block_name = tokens[i]
-            i += 3  # skip name, ':', '{'
+            i += 3
 
-            if block_name in ("Right", "Left", "Gestures"):
-                # skip until closing '}'
-                while i < len(tokens) and tokens[i] != '}':
-                    i += 1
-                i += 1  # skip '}'
+            if block_name in ("Right", "Left"):
+                current_hand = block_name
                 continue
 
-            # parse x, y, z from block
+            if block_name == "Gestures":
+                while i < len(tokens) and tokens[i] != '}':
+                    i += 1
+                i += 1
+                continue
+
             coords = {}
             while i < len(tokens) and tokens[i] != '}':
                 if tokens[i] in ('x', 'y', 'z') and i + 2 < len(tokens) and tokens[i+1] == ':':
@@ -71,14 +69,14 @@ def parse_osc_args(args):
                     i += 3
                 else:
                     i += 1
-            i += 1  # skip '}'
+            i += 1
 
-            if len(coords) == 3:
-                result[block_name] = coords
+            if len(coords) == 3 and current_hand:
+                result[current_hand][block_name] = coords
         else:
             i += 1
 
-    return result if result else None
+    return result if (result["Right"] or result["Left"]) else None
 
 # normalize hand landmarks to the bounding box
 def normalize_landmarks(landmarks, bbox):
@@ -227,12 +225,16 @@ class OSCInputHandler:
         if osc_data is None:
             return
 
-        landmarks = osc_dict_to_landmarks(osc_data)
-        if landmarks is None:
+
+        right_landmarks = osc_dict_to_landmarks(osc_data["Right"])  # goes to model
+        left_landmarks = osc_dict_to_landmarks(osc_data.get("Left", {}))
+
+        # right landmark
+        if right_landmarks is None:
             return
 
         w, h = 960, 540
-        landmarks_scaled = [LandmarkPoint((1 - l.x) * w, l.y * h, l.z * h) for l in landmarks]
+        landmarks_scaled = [LandmarkPoint((1 - l.x) * w, l.y * h, l.z * h) for l in right_landmarks]
 
         min_x = min(l.x for l in landmarks_scaled)
         max_x = max(l.x for l in landmarks_scaled)
@@ -250,6 +252,17 @@ class OSCInputHandler:
             true_val, output = predict_single_input(self.model, features)
             print(f"[DEBUG] probabilities: {[f'{p:.3f}' for p in output]}")
 
+            # compute velocity from hand size (distance proxy)
+            hand_width = max_x - min_x
+            hand_height = max_y - min_y
+            hand_size = (hand_width + hand_height) / 2
+
+            # map to velocity 0-127 — tune min_size/max_size to your range
+            min_size = 50   # hand far away
+            max_size = 200  # hand close to camera
+            velocity = int(np.clip((hand_size - min_size) / (max_size - min_size) * 127, 0, 127))
+            print(f"[DEBUG] hand_size: {hand_size:.1f}, velocity: {velocity}")
+
             raw_class = np.argmax(output)
             raw_midi = self.app.current_scale[raw_class] + self.app.base_note
             midi_note = self.compute_median_midi_note(raw_midi)
@@ -257,7 +270,7 @@ class OSCInputHandler:
 
             if midi_note is not None:
                 if midi_note != self.last_midi_note:
-                    self.app.osc_client.send_message("/note", [int(midi_note), 80, 0])
+                    self.app.osc_client.send_message("/note", [int(midi_note), int(velocity), 0])
                     self.last_midi_note = midi_note
 
         except Exception as e:
