@@ -8,7 +8,6 @@ import torch.nn.init as init
 import torch.nn.functional as F
 import time
 import threading
-import re
 from pythonosc import udp_client, dispatcher, osc_server
 
 note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -304,10 +303,6 @@ class CameraApp:
         self.base_note = 60
         self.current_scale = major_scale
         self.min_velocity_to_trigger_note_on = 40
-        self.max_elbow_wrist_x_distance = 0.0
-        self.min_elbow_wrist_x_distance = 1.0
-        self.note_vector = []
-        self.note_vector_size = 11
         self.gesture_handler = OSCInputHandler(self)
 
         # OSC out (to Max)
