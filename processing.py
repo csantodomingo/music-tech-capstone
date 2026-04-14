@@ -56,10 +56,17 @@ def parse_osc_args(args):
                 current_hand = block_name
                 continue
 
-            if block_name == "Gestures":
+            # only skip Gestures if we don't have a current hand context
+            if block_name == "Gestures" and current_hand is not None:
+                gesture_data = {}
                 while i < len(tokens) and tokens[i] != '}':
-                    i += 1
-                i += 1
+                    if isinstance(tokens[i], str) and i + 2 < len(tokens) and tokens[i+1] == ':':
+                        gesture_data[tokens[i]] = float(tokens[i+2])
+                        i += 3
+                    else:
+                        i += 1
+                i += 1  # skip '}'
+                result[current_hand]["Gestures"] = gesture_data
                 continue
 
             coords = {}
@@ -134,6 +141,13 @@ def extract_features(landmarks, bbox):
     convex_area = calculate_convex_hull_area(centered)
     return np.array(centered).flatten().tolist()[3:] + distances + angles + [convex_area]
 
+def get_left_gesture(osc_data):
+    left = osc_data.get("Left", {})
+    gestures = left.get("Gestures", {})
+    if not gestures:
+        return None
+    # return the gesture name with highest confidence
+    return max(gestures, key=gestures.get)
 
 # get working directory
 def get_working_dir():
@@ -181,6 +195,7 @@ class OSCInputHandler:
         self.last_velocity = 0
         self.note_vector = []
         self.note_vector_size = 11
+        self.octave_shift = 0 
         self.last_gesture_time = 0  
         self.no_hand_timeout = 0.2  # seconds needed for no hand timeout
         
@@ -225,11 +240,7 @@ class OSCInputHandler:
         if osc_data is None:
             return
 
-
         right_landmarks = osc_dict_to_landmarks(osc_data["Right"])  # goes to model
-        left_landmarks = osc_dict_to_landmarks(osc_data.get("Left", {}))
-
-        # right landmark
         if right_landmarks is None:
             return
 
@@ -263,8 +274,19 @@ class OSCInputHandler:
             velocity = int(np.clip((hand_size - min_size) / (max_size - min_size) * 127, 0, 127))
             print(f"[DEBUG] hand_size: {hand_size:.1f}, velocity: {velocity}")
 
+            # left hand octave control
+            left_gesture = get_left_gesture(osc_data)
+            if left_gesture == "Thumb_Up":
+                self.octave_shift = 1
+            elif left_gesture == "Thumb_Down":
+                self.octave_shift = -1
+            else:
+                self.octave_shift = 0
+            print(f"[DEBUG] left gesture: {left_gesture}, octave shift: {self.octave_shift}")
+
+            # compute midi note
             raw_class = np.argmax(output)
-            raw_midi = self.app.current_scale[raw_class] + self.app.base_note
+            raw_midi = self.app.current_scale[raw_class] + self.app.base_note + (self.octave_shift * 12)
             midi_note = self.compute_median_midi_note(raw_midi)
             print(f"[DEBUG] raw class: {raw_class}, raw_midi: {raw_midi}, smoothed: {midi_note}")
 
