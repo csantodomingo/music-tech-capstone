@@ -129,11 +129,10 @@ def handle_gesture(address, *args):
         print(f"Error: {e}")
 
 def save_data():
-    filename = "training_data.csv"
-    with open(filename, 'w', newline='') as f:
+    with open(FILENAME, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerows(DATA)
-    print(f"\nSaved {len(DATA)} samples to {filename}")
+    print(f"\nSaved {len(DATA)} samples to {FILENAME}")
 
 def print_counts():
     print("\nCurrent sample counts:")

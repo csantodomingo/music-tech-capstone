@@ -242,6 +242,8 @@ class OSCInputHandler:
         right_landmarks = osc_dict_to_landmarks(osc_data["Right"])  # goes to model
         if right_landmarks is None:
             return
+        
+        left_landmarks_raw = osc_dict_to_landmarks(osc_data.get("Left", {})) if osc_data.get("Left") else None
 
         w, h = 960, 540
         landmarks_scaled = [LandmarkPoint((1 - l.x) * w, l.y * h, l.z * h) for l in right_landmarks]
@@ -260,7 +262,7 @@ class OSCInputHandler:
         try:
             features = extract_features(landmarks_scaled, bbox)
             true_val, output = predict_single_input(self.model, features)
-            print(f"[DEBUG] probabilities: {[f'{p:.3f}' for p in output]}")
+            #print(f"[DEBUG] probabilities: {[f'{p:.3f}' for p in output]}")
 
             # compute velocity from hand size (distance proxy)
             hand_width = max_x - min_x
@@ -271,7 +273,7 @@ class OSCInputHandler:
             min_size = 50   # hand far away
             max_size = 200  # hand close to camera
             velocity = int(np.clip((hand_size - min_size) / (max_size - min_size) * 127, 0, 127))
-            print(f"[DEBUG] hand_size: {hand_size:.1f}, velocity: {velocity}")
+          #  print(f"[DEBUG] hand_size: {hand_size:.1f}, velocity: {velocity}")
 
             # left hand octave control
             left_gesture = get_left_gesture(osc_data)
@@ -281,13 +283,38 @@ class OSCInputHandler:
                 self.octave_shift = -1
             else:
                 self.octave_shift = 0
-            print(f"[DEBUG] left gesture: {left_gesture}, octave shift: {self.octave_shift}")
+          #  print(f"[DEBUG] left gesture: {left_gesture}, octave shift: {self.octave_shift}")
+
+            # left hand distance → filter cutoff
+            if left_landmarks_raw is not None:
+                lw, lh = 960, 540
+                left_scaled = [LandmarkPoint(l.x * lw, l.y * lh, l.z * lh) for l in left_landmarks_raw]
+                
+                l_min_x = min(l.x for l in left_scaled)
+                l_max_x = max(l.x for l in left_scaled)
+                l_min_y = min(l.y for l in left_scaled)
+                l_max_y = max(l.y for l in left_scaled)
+                
+                left_hand_width = l_max_x - l_min_x
+                left_hand_height = l_max_y - l_min_y
+                left_hand_size = (left_hand_width + left_hand_height) / 2
+
+                # map hand size to filter cutoff Hz
+                # closer hand = larger size = brighter (higher cutoff)
+                l_min_size = 200    # far away → dark
+                l_max_size = 400   # close → bright
+                cutoff = int(np.clip(
+                    (left_hand_size - l_min_size) / (l_max_size - l_min_size) * 8000 + 200,
+                    200, 8000
+                ))
+                print(f"[DEBUG] left hand_size: {left_hand_size:.1f}, cutoff: {cutoff}")
+                self.app.osc_client.send_message("/cutoff", [cutoff])
 
             # compute midi note
             raw_class = np.argmax(output)
             raw_midi = self.app.current_scale[raw_class] + self.app.base_note + (self.octave_shift * 12)
             midi_note = self.compute_median_midi_note(raw_midi)
-            print(f"[DEBUG] raw class: {raw_class}, raw_midi: {raw_midi}, smoothed: {midi_note}")
+           # print(f"[DEBUG] raw class: {raw_class}, raw_midi: {raw_midi}, smoothed: {midi_note}")
 
             if midi_note is not None:
                 if midi_note != self.last_midi_note:
