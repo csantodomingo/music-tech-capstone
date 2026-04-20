@@ -23,6 +23,14 @@ print(f"After cleaning: {len(df)} samples")
 X = df.iloc[:, 1:].values.astype(np.float32)
 y = df.iloc[:, 0].values.astype(np.int64)
 
+# penalize mi over-prediction
+class_counts = np.bincount(y.astype(int))
+print(f"Class counts: {class_counts}")
+class_weights = 1.0 / class_counts
+class_weights = class_weights / class_weights.sum() * len(class_weights)
+weights_tensor = torch.tensor(class_weights, dtype=torch.float32)
+criterion = nn.CrossEntropyLoss(weight=weights_tensor)
+
 print(f"Loaded {len(X)} samples, {X.shape[1]} features, {len(set(y))} classes")
 
 X_tensor = torch.tensor(X)

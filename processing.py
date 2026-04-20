@@ -196,6 +196,7 @@ class OSCInputHandler:
         self.note_vector_size = 11
         self.octave_shift = 0 
         self.last_gesture_time = 0  
+        self.last_octave_shift = 0
         self.no_hand_timeout = 0.2  # seconds needed for no hand timeout
         
         # start a watchdog thread that checks for hand disappearance
@@ -232,7 +233,7 @@ class OSCInputHandler:
         return None
 
     def handle_gesture(self, address, *args):
-        print(f"[DEBUG] message received")
+       # print(f"[DEBUG] message received")
         self.last_gesture_time = time.time()
         """OSC handler for /gesture messages coming from Max."""
         osc_data = parse_osc_args(args)
@@ -262,7 +263,7 @@ class OSCInputHandler:
         try:
             features = extract_features(landmarks_scaled, bbox)
             true_val, output = predict_single_input(self.model, features)
-            #print(f"[DEBUG] probabilities: {[f'{p:.3f}' for p in output]}")
+            print(f"[DEBUG] probabilities: {[f'{p:.3f}' for p in output]}")
 
             # compute velocity from hand size (distance proxy)
             hand_width = max_x - min_x
@@ -281,8 +282,10 @@ class OSCInputHandler:
                 self.octave_shift = 1
             elif left_gesture == "Thumb_Down":
                 self.octave_shift = -1
-            else:
+            elif left_landmarks_raw is None:
+                # only reset if left hand is completely absent
                 self.octave_shift = 0
+                
           #  print(f"[DEBUG] left gesture: {left_gesture}, octave shift: {self.octave_shift}")
 
             # left hand distance → filter cutoff
@@ -311,15 +314,16 @@ class OSCInputHandler:
                 self.app.osc_client.send_message("/cutoff", [cutoff])
 
             # compute midi note
-            raw_class = np.argmax(output)
-            raw_midi = self.app.current_scale[raw_class] + self.app.base_note + (self.octave_shift * 12)
-            midi_note = self.compute_median_midi_note(raw_midi)
-           # print(f"[DEBUG] raw class: {raw_class}, raw_midi: {raw_midi}, smoothed: {midi_note}")
+            raw_class = int(np.argmax(output))
+            midi_note = self.compute_median_midi_note(raw_class)
 
-            if midi_note is not None:
-                if midi_note != self.last_midi_note:
-                    self.app.osc_client.send_message("/note", [int(midi_note), int(velocity), 0])
-                    self.last_midi_note = midi_note
+            octave_changed = self.octave_shift != self.last_octave_shift
+            self.last_octave_shift = self.octave_shift
+
+            if midi_note is not None and (midi_note != self.last_midi_note or octave_changed):
+                self.app.osc_client.send_message("/gesture_class", [int(midi_note), int(velocity), self.octave_shift])
+                print(f"/gesture_class, [{int(midi_note)}, {int(velocity)}, {self.octave_shift}]")
+                self.last_midi_note = midi_note
 
         except Exception as e:
             print("Processing error:", e)
@@ -327,8 +331,6 @@ class OSCInputHandler:
 class CameraApp:
     def __init__(self):
         # State
-        self.base_note = 60
-        self.current_scale = major_scale
         self.min_velocity_to_trigger_note_on = 40
         self.gesture_handler = OSCInputHandler(self)
 
@@ -337,23 +339,10 @@ class CameraApp:
 
         # OSC in (from Max)
         disp = dispatcher.Dispatcher()
-        disp.map("/base_note", self.handle_base_note)
-        disp.map("/scale", self.handle_scale)
-        disp.map("/min_velocity", self.handle_min_velocity)
         disp.map("/gesture", self.gesture_handler.handle_gesture) 
         self.osc_server = osc_server.ThreadingOSCUDPServer(("127.0.0.1", 7401), disp)
         osc_thread = threading.Thread(target=self.osc_server.serve_forever, daemon=True)
         osc_thread.start()
-
-    def handle_base_note(self, address, *args):
-        if args:
-            self.base_note = int(args[0])
-            print(f"Base note: {self.base_note}")
-
-    def handle_scale(self, address, *args):
-        if args:
-            self.current_scale = major_scale if int(args[0]) == 0 else minor_scale
-            print(f"Scale: {'major' if int(args[0]) == 0 else 'minor'}")
 
     def handle_min_velocity(self, address, *args):
         if args:
