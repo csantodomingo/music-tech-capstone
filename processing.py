@@ -34,7 +34,6 @@ def osc_dict_to_landmarks(osc_data: dict):
     landmarks = []
     for name in LANDMARK_ORDER:
         if name not in osc_data:
-            print(f"Warning: missing landmark '{name}'")
             return None
         pt = osc_data[name]
         landmarks.append(LandmarkPoint(pt["x"], pt["y"], pt["z"]))
@@ -193,12 +192,14 @@ class OSCInputHandler:
         self.last_midi_note = None
         self.last_velocity = 0
         self.note_vector = []
-        self.note_vector_size = 11
+        self.note_vector_size = 17
         self.octave_shift = 0 
+        self.octave_vector = []
+        self.octave_vector_size = 17
         self.last_gesture_time = 0  
         self.last_octave_shift = 0
-        self.no_hand_timeout = 0.2  # seconds needed for no hand timeout
-        
+        self.no_hand_timeout = 0.5  # seconds needed for no hand timeout
+                
         # start a watchdog thread that checks for hand disappearance
         watchdog = threading.Thread(target=self.watchdog_loop, daemon=True)
         watchdog.start()
@@ -271,22 +272,25 @@ class OSCInputHandler:
             hand_size = (hand_width + hand_height) / 2
 
             # map to velocity 0-127 — tune min_size/max_size to your range
-            min_size = 50   # hand far away
-            max_size = 200  # hand close to camera
+            min_size = 100   # hand far away
+            max_size = 300  # hand close to camera
             velocity = int(np.clip((hand_size - min_size) / (max_size - min_size) * 127, 0, 127))
           #  print(f"[DEBUG] hand_size: {hand_size:.1f}, velocity: {velocity}")
+            self.app.osc_client.send_message("/velocity", int(velocity))
 
             # left hand octave control
             left_gesture = get_left_gesture(osc_data)
             if left_gesture == "Thumb_Up":
-                self.octave_shift = 1
+                raw_octave = 1
             elif left_gesture == "Thumb_Down":
-                self.octave_shift = -1
-            elif left_landmarks_raw is None:
-                # only reset if left hand is completely absent
-                self.octave_shift = 0
-                
-          #  print(f"[DEBUG] left gesture: {left_gesture}, octave shift: {self.octave_shift}")
+                raw_octave = -1
+            else:
+                raw_octave = 0
+
+            self.octave_vector.append(raw_octave)
+            if len(self.octave_vector) > self.octave_vector_size:
+                self.octave_vector = self.octave_vector[1:]
+            self.octave_shift = int(statistics.median(self.octave_vector))
 
             # left hand distance → filter cutoff
             if left_landmarks_raw is not None:
@@ -304,6 +308,7 @@ class OSCInputHandler:
 
                 # map hand size to filter cutoff Hz
                 # closer hand = larger size = brighter (higher cutoff)
+                # update running min/max
                 l_min_size = 200    # far away → dark
                 l_max_size = 400   # close → bright
                 cutoff = int(np.clip(
